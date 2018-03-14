@@ -25,8 +25,8 @@ random.seed(499)
 np.random.seed(499)
 torch.manual_seed(499)
 torch.cuda.manual_seed(499)
-classes ={'Guitar':0,'Violin':1,'Piano':2,'Flute':3}
-revclasses ={0:'Guitar',1:'Violin',2:'Piano',3:'Flute'}
+classes ={'Guitar':1,'Violin':0,'Piano':2,'Flute':3}
+revclasses ={1:'Guitar',0:'Violin',2:'Piano',3:'Flute'}
 '''
 class Net(nn.Module):
     def __init__(self):
@@ -265,6 +265,12 @@ def random_permutate(data,train_percent=0.7,percent=1.0):
         limit = int((len(z) * train_percent))
         train =z[:limit]
         test = z[limit:]
+        if len(train) % 2 != 0:
+            curr = len(train)
+            train = train[:-(curr%2)]
+        if len(test) % 2 != 0:
+            curr = len(test)
+            test = test[:-(curr % 2)]
         for i in train:
             rptrain_data.append((x[0][i],x[1]))
         for i in test:
@@ -281,46 +287,63 @@ train_data,test_data = random_permutate(dataset)
 train_dataset = DriveData(train_data,44100)
 print(len(train_dataset.data))
 test_dataset = DriveData(test_data,44100)
-train_loader = DataLoader(train_dataset,shuffle=True,collate_fn=mycollate, num_workers=2,batch_size=6,pin_memory=True)
+train_loader = DataLoader(train_dataset,shuffle=True,collate_fn=mycollate, num_workers=2,batch_size=2,pin_memory=True)
 # print(train_loader)
-test_loader = DataLoader(test_dataset, batch_size=1, num_workers=1)
+test_loader = DataLoader(test_dataset,shuffle=True,collate_fn=mycollate,pin_memory=True, batch_size=2, num_workers=2)
 
 n = 2049
-hidden_size = 6
+hidden_size = 75
 num_layers =2
-batch_size =6
+batch_size =2
 dense1_o =5
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.hidden = None
         self.rnn1 = nn.GRU(input_size=n,
                             hidden_size=hidden_size,
-                            num_layers=num_layers,bias=True,dropout=0.3)
-        self.dense1 = nn.Linear(hidden_size,dense1_o ,bias=True)
+                            num_layers=num_layers)
+        self.dense1 = nn.Linear(hidden_size,dense1_o,bias=True)
         self.dense2 = nn.Linear(dense1_o,4,bias=True)
     def forward(self,x,diff,hidden):
-        self.hidden = hidden
-        y, hidden = self.rnn1(x,self.hidden)
+        # self.hidden = hidden
+        x, hidden = self.rnn1(x.cuda(),hidden)
+        torch.cuda.empty_cache()
         # print(x,"prev")
-        self.hidden = Variable(hidden.data,volatile = True)
-        x = y.data
-        del y
-        x = x[-1 + diff[0]]
-        # print(x,"after")
-        x = x.contiguous().view(-1, hidden_size)
-        # print(x,"after")
-        x = Variable(x)
-        x = F.sigmoid(self.dense1(x))
-        y = x.data
-        del x
-        x = Variable(y)
-        del y
-        x = F.softmax(self.dense2(x))
-        return x
+        # self.hidden = Variable(hidden.data,requires_grad= True)
+        # x = x.data
+        # print(x)
+        mylist = []
+        for i in range(2):
+            curr = x[-1 + diff[i]][i][:].view(-1,hidden_size)
+            # curr = curr.view(1,hidden_size)
+            mylist.append(curr)
+            # print(curr.size())
+        newx = torch.cat(tuple(mylist),0)
+        # for i in range(4):
+            # x[]
+        # print(diff,newx,hidden)
+        # # print(x,"after")
+        # x = x.contiguous().view(-1, hidden_size)
+        # # print(x,"after")
+        # x = Variable(x,requires_grad= True)
+        x = self.dense1(newx)
+        first =  nn.BatchNorm1d(dense1_o)
+        x = first(x.cpu()).cuda()
+        # x.requires_grad = True
+        x = self.dense2(x)
+        second = nn.BatchNorm1d(4)
+        x= second(x.cpu()).cuda()
+        # x.requires_grad = True
+        return F.softmax(F.sigmoid(x)),hidden
     def init_hidden(self,mylength):
         weight = next(self.parameters()).data
-        return Variable(weight.new(num_layers, batch_size, hidden_size).zero_().cuda())
+        hidden =  Variable(weight.new(num_layers, batch_size, hidden_size).zero_().cuda())
+        return hidden
+def repackage_hidden(h):
+    if type(h) == Variable:
+        return Variable(h.data)
+    else:
+        return tuple(repackage_hidden(v) for v in h)
 def training(epochs,net,loader):
         torch.cuda.empty_cache()
         print("Number of batches to go",len(loader))
@@ -341,21 +364,19 @@ def training(epochs,net,loader):
                 # labels = labels.long().cuda()
                 output,lengths = pad_packed_sequence(inputs)
                 del inputs
-                output = output.cuda()
                 maxlength = max(lengths)
                 diff = [ j - maxlength for j in lengths]
                 print("before net")
                 if(i==0 and epoch == 0):
-                    hidden = model.init_hidden(maxlength)
-                else:
-                    hidden = net.hidden
+                    hidden = net.init_hidden(maxlength)
+                # else:
+                    # hidden = net.hidden
                 # print(hidden)
                 # diff = Variable(diff).cuda()
                 # forward + backward + optimize
-                outputs = net(output,diff,hidden)
-                del output
-                del diff
-                del hidden
+                hidden = repackage_hidden(hidden)
+                # net.zero_grad()
+                outputs,hidden = net(output,diff,hidden)
                 # _,mylabels = torch.max(outputs,1)
                 # mylabels = mylabels.view(batch_size,1)
                 # labels = labels.view(batch_size,1)
@@ -366,15 +387,22 @@ def training(epochs,net,loader):
                 # print(outputs.cpu(),"outputs")
                 # print(mylabels.cpu())
                 labels = Variable(labels.long()).cuda()
-                optimizer.zero_grad()
+                print(outputs,labels)
                 loss = criterion(outputs, labels)
+                optimizer.zero_grad()
                 del outputs
                 del labels
                 # loss = loss
                 print(loss.data[0])
                 # loss = loss.cpu()
                 loss.backward()
+                for param in net.parameters():
+                    if param.grad is not None:
+                        print(param.grad.data.sum())
+                    else:
+                        print("Its None")
                 optimizer.step()
+                # del hidden
                 # print statistics
                 torch.cuda.synchronize()
                 running_loss += loss.data[0]
@@ -386,6 +414,7 @@ def training(epochs,net,loader):
                     print("in loop")
                 # hidden = Variable(old_hidden.data,volatile = True)
                 net.train()
+                # net.hidden = Variable(net.hidden.data,requires_grad = True)
                 torch.cuda.empty_cache()
             print('getting out of epoch')
             del loss
@@ -394,9 +423,9 @@ def training(epochs,net,loader):
                 del net
                 net = Net().cuda()
             else:
-                return net
+                return net,hidden
 
-def testing(net,loader):
+def testing(net,loader,hidden):
     correct = 0
     total = 0
     class_correct = [0.0 for i in range(4)]
@@ -405,15 +434,26 @@ def testing(net,loader):
     for i,data in enumerate(loader):
         print("batch",i + 1)
         inputs,labels = data
-        outputs= net(Variable(inputs),[0] ,net.hidden)
+        labels = labels.long().cuda()
+        output,lengths = pad_packed_sequence(inputs)
+        del inputs
+        output = output.cuda()
+        maxlength = max(lengths)
+        diff = [ j - maxlength for j in lengths]
+        outputs,hidden= net(output,diff,hidden)
         _,predicted = torch.max(outputs.data,1)
+        # print(predicted)
         total += labels.size(0)
         correct += (predicted == labels).sum()
         c = (predicted == labels).squeeze()
-        for i in range(1):
+        torch.cuda.synchronize()
+        for i in range(2):
             label = labels[i]
             class_correct[label] += c[i]
             class_total[label] += 1
+        del labels
+        hidden = repackage_hidden(hidden)
+        # net.hidden = Variable(net.hidden.data,requires_grad = True)
     print("accuracy is ",100* correct /total)
     for i in range(4):
         print("Accuracy of %s:%f %%" %(revclasses[i],100 * class_correct[i] / class_total[i]))
@@ -423,19 +463,19 @@ def testing(net,loader):
 # print(libs)
 model = Net()
 model.cuda()
-lr = 0.001
+lr = 0.0001
 # output, hidden = model(X_train_1, Variable(hidden.data))
 
 # print(criterion)
 optimizer = optim.Adam(model.parameters(), lr=lr)
 # myhidden = model.init_hidden()
 torch.cuda.empty_cache()
-mynet = training(2,model,train_loader)
+mynet,myhidden = training(1,model,train_loader)
 # torch.save(mynet.state_dict(),'/home/ce21/mymodel.pth.tar')
 # newnet = Net()
 # mynet_state_dict = torch.load('/home/ce21/mymodel.pth.tar')
 # newnet.load_state_dict(mynet_state_dict)
 # testing(newnet,test_loader)
-testing(mynet,test_loader)
+testing(mynet,test_loader,myhidden)
 # f = open('f.txt','w')
 # print(train_loader.__sizeof__())
