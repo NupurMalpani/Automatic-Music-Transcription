@@ -3,6 +3,7 @@ import librosa
 import scipy.signal as signal
 import numpy as np
 from peaks import findpeaks
+import math
 import torchaudio
 class MQPeak:
     def __init__(self,amp=0.0,freq=0.0,phase=0.0,bin=0,next=None,prev=None):
@@ -46,7 +47,7 @@ class MQ_parameters:
     #     heapq_max.heappush_max(peak_list(new_peak.amp,new_peak))
 '''
 def mq_find_peaks(gotten_fft,win_size,samplingrate,max_peaks):
-    amps = gotten_fft.real **2 + gotten_fft.imag **2
+    amps = np.sqrt(gotten_fft.real **2 + gotten_fft.imag **2)
     # indexes = peakutils.indexes(amps)
     indexes = findpeaks(amps)
     phases = np.arctan(np.divide(gotten_fft.imag,gotten_fft.real))
@@ -124,11 +125,13 @@ def init_all_freqs(sorted_first_peaks):
 
 def mysimpl(filename):
     y,sr = torchaudio.load(filename)
-    if(y.shape[1] == 2):
-        y =( y[:,1] + y[:,0]) / 2
+    if(y.shape[1] > 1):
+        d = y.shape[1]
+        y =y.numpy()
+        y = np.sum(y,axis = 1)/d
     else:
         y = y.view(-1,)
-    y =y.numpy()
+        y =y.numpy()
     print(y.shape,filename)
     stfts = librosa.stft(y,window=signal.get_window('blackman',2048))
     stfts = np.transpose(stfts)
