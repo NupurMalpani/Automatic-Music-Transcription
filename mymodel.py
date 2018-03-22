@@ -21,6 +21,7 @@ from torch import optim
 import math
 from mq import mysimpl
 import socket
+from other_feat import all_feat
 random.seed(499)
 np.random.seed(499)
 torch.manual_seed(499)
@@ -72,7 +73,7 @@ class DriveData(Dataset):
         # print(_ys,file=f)
         # f.close()
         self.fs = fs
-        self.freqs =np.array([i * self.fs/2048 for i in range(2049)])
+        self.freqs =np.array([(i + 1) * self.fs/2048 for i in range(2048)])
 
     def give_xs_ys(self):
         return self.__xs,self.__ys
@@ -104,32 +105,41 @@ class DriveData(Dataset):
         print(filename)
         features,num_frames = mysimpl(filename)
         print(num_frames)
+        sp,c,roll,cr,flux = all_feat(filename)
+        num_frames =  cr.shape[1]
+        print(np.count_nonzero(sp.imag),np.count_nonzero(flux.imag))
         frames_features = {}
-        for frame in range(num_frames+1):
+        for frame in range(num_frames):
             frames_features[frame] = []
-        for x in features:
+        # for x in features:
             # print(x[0],x[1],x[2]) x[1] = framenumber x[0] amp x[2] freq
-            frames_features[int(x[1])].append((x[0],x[2]))
+            # frames_features[int(x[1])].append((x[0],x[2]))
         frame_freq_bins =[]
-        for x in range(num_frames+1):
-            freq_bins = np.zeros(2049)
+        for x in range(num_frames):
+            freq_bins = np.zeros(2053)
+            freq_bins[2048] = sp[x]
+            freq_bins[2049] = c[0][x]
+            freq_bins[2050] = roll[0][x]
+            freq_bins[2051] = cr[0][x]
+            freq_bins[2052] = flux[x]
             #dict with key as freqbin
-            to_be_added ={}
-            for y in frames_features[x]:
-                index_i = np.abs(self.freqs-y[1]).argmin();
-                if(y[1] < self.freqs[index_i]):
-                    index_i -=1;
-                if index_i not in to_be_added.keys():
-                    to_be_added[index_i] = []
-                to_be_added[index_i].append(y[0])
-            all_non_zero_bins = to_be_added.keys()
-            for x in all_non_zero_bins:
-                amp_array =to_be_added[x]
-                amp_array = np.array(amp_array)
-                avg_amp = np.mean(amp_array)
-                freq_bins[x] += avg_amp
-            # freq_bins = torch.LongTensor(freq_bins)
+            # to_be_added ={}
+            # for y in frames_features[x]:
+            #     index_i = np.abs(self.freqs-y[1]).argmin();
+            #     if(y[1] < self.freqs[index_i]):
+            #         index_i -=1;
+            #     if index_i not in to_be_added.keys():
+            #         to_be_added[index_i] = []
+            #     to_be_added[index_i].append(y[0])
+            # all_non_zero_bins = to_be_added.keys()
+            # for x in all_non_zero_bins:
+            #     amp_array =to_be_added[x]
+            #     amp_array = np.array(amp_array)
+            #     avg_amp = np.mean(amp_array)
+            #     freq_bins[x] += avg_amp
+            # # freq_bins = torch.LongTensor(freq_bins)
             frame_freq_bins.append(freq_bins)
+            
         frame_freq_bins = np.array(frame_freq_bins)
         frame_freq_bins = torch.from_numpy(frame_freq_bins)
         print("frame freq bins")
@@ -231,9 +241,9 @@ def mycollate(batch):
     print("max length of batch",maxlen)
     lengths = np.array(lengths)
     diff = maxlen - lengths
-    new_features = torch.zeros((lengths.shape[0],maxlen,2049))
+    new_features = torch.zeros((lengths.shape[0],maxlen,2053))
     for i,x in enumerate(features):
-        to_cat = np.zeros((diff[i],2049))
+        to_cat = np.zeros((diff[i],2053))
         to_cat = torch.from_numpy(to_cat)
         new_features[i] = torch.cat([x,to_cat])
         print(new_features[i].shape,"new length",i)
@@ -291,7 +301,7 @@ train_loader = DataLoader(train_dataset,shuffle=True,collate_fn=mycollate, num_w
 # print(train_loader)
 test_loader = DataLoader(test_dataset,shuffle=True,collate_fn=mycollate,pin_memory=True, batch_size=2, num_workers=2)
 
-n = 2049
+n = 2053
 hidden_size = 75
 num_layers =2
 batch_size =2
