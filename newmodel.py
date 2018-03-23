@@ -25,6 +25,9 @@ from other_feat import all_feat
 import matplotlib.pyplot as plt
 from PIL import Image
 import torchvision.transforms as transforms
+import librosa
+import scipy.signal as signal
+import librosa.display as display
 random.seed(499)
 np.random.seed(499)
 torch.manual_seed(499)
@@ -129,7 +132,7 @@ class DriveData(Dataset):
         frame_freq_bins = []
         for x in range(num_frames):
             mycqt =librosa.cqt(y,sr)
-            librosa.specshow.display(mycqt)
+            display.specshow(mycqt)
             imgfile = filename + "_" + x + ".png"
             plt.savefig(imgfile)
             plt.close()
@@ -142,7 +145,7 @@ class DriveData(Dataset):
             freq_bins[3] = cr[0][x]
             freq_bins[4] = flux[x]
             features[x].append(transformed)
-            features[x].append(torch.from_numpy(freqbins))
+            features[x].append(torch.from_numpy(freq_bins))
         # dict with key as freqbin
         # to_be_added ={}
         # for y in frames_features[x]:
@@ -260,7 +263,7 @@ def my_collate(batch):
 def mycollate(batch):
     features = [x[0] for x in batch]
     labels = [x[1] for x in batch]
-    frames = x[2]
+    frames = [x[2] for x in batch]
     lengths = [len(x) for x in features]
     # print(features,labels,lengths)
     nl = np.array(lengths)
@@ -273,11 +276,17 @@ def mycollate(batch):
     labels = []
     for i in range(len(nl)):
         labels.append(nl[inds[i]])
+    nf = frames
+    frames = []
+    for i in range(len(nf)):
+        frames.append(nf[inds[i]])
     # labels = [x for _,x in sorted(zip(lengths,labels))]
     # features = [x for _,x in sorted(zip(lengths,features))]
     lengths.sort(reverse=True)
     labels.reverse()
     features.reverse()
+    frames.reverse()
+    frames = torch.Tensor(frames)
     maxlen = max(lengths)
     print("max length of batch", maxlen)
     lengths = np.array(lengths)
@@ -288,15 +297,15 @@ def mycollate(batch):
     #     to_cat = torch.from_numpy(to_cat)
     #     new_features[i] = torch.cat([x, to_cat])
     #     print(new_features[i].shape, "new length", i)
-    dummy = [torch.zeros(620,480)]
+    dummy = torch.zeros(620,480)
     norm_features = [[] for x in range(batch)]
     image_tensors = [[] for x in range(batch)]
     for i , x in enumerate(features):
         to_cat = dummy.repeat(diff[i])
         image_tensors[i] = x[0] + to_cat
         norm_features[i] = x[1] + torch.zeros(5).repeat(diff[i])
-    image_tensors = torch.LongTensor(image_tensors)
-    norm_features = torch.LongTensor(norm_features)
+    image_tensors = torch.Tensor(image_tensors)
+    norm_features = torch.Tensor(norm_features)
     # features = [x for _,x in sorted(zip(lengths,features))]
     # lengths.sort()
     # features.reverse()
@@ -306,7 +315,7 @@ def mycollate(batch):
     # print(np.array(features))
     # print(torch.from_numpy(np.array(features)))
     # print(Variable(torch.from_numpy(np.array(features))))
-    print(new_features.shape, "new features shape")
+    print(norm_features.shape, "new features shape")
     image_tensors = pack_padded_sequence(Variable(image_tensors), lengths, batch_first=True)
     norm_features = pack_padded_sequence(Variable(norm_features),lengths,batch_first=True)
     new_l = torch.LongTensor(batch_size, 1)
@@ -443,9 +452,9 @@ def training(epochs, net, loader):
             # zero the parameter gradients
             # inputs = inputs.cuda()
             # labels = labels.long().cuda()
-            output_images, lengths = pad_packed_sequence(image_tensors)
+            output_images, lengths = pad_packed_sequence(imagetensors)
             output_norm_features,lengths = pad_packed_sequence(feature_tensors)
-            del image_tensors,feature_tensors
+            del imagetensors,feature_tensors
             maxlength = max(lengths)
             diff = [j - maxlength for j in lengths]
             print("before net")
@@ -458,7 +467,7 @@ def training(epochs, net, loader):
             # forward + backward + optimize
             hidden = repackage_hidden(hidden)
             # net.zero_grad()
-            outputs, hidden = net(output_images,output_norm_features, diff, hidden,frames)
+            outputs, hidden = net(output_images,output_norm_features, diff, hidden,Variable(frames))
             # _,mylabels = torch.max(outputs,1)
             # mylabels = mylabels.view(batch_size,1)
             # labels = labels.view(batch_size,1)
