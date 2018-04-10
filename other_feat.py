@@ -1,6 +1,6 @@
 import librosa
-import  audiolazy
-from audiolazy import lpc
+# import  audiolazy
+# from audiolazy import lpc
 import os
 import torchaudio
 import scipy.signal as signal
@@ -15,14 +15,15 @@ def spec_roll(y,sr):
 def zcr(y):
     cr = librosa.feature.zero_crossing_rate(y)
     return cr
-def mylpc(y):
-    analysis_filt = lpc.kautocor(y,25)
-    residual = analysis_filt(y)
-    synth_filt  = 1 /analysis_filt
-    return synth_filt(residual)
+# def mylpc(y):
+#     analysis_filt = lpc.kautocor(y,25)
+#     residual = analysis_filt(y)
+#     synth_filt  = 1 /analysis_filt
+#     return synth_filt(residual)
 def spec_spread(y,sr,stfts):
     cent = spec_cent(y,sr)
     frames = cent.shape[1]
+    #print("frames by cent",frames)
     bins = stfts[0].shape[0]
     freqs = [(t + 1) * sr /bins for t in range(bins)]
     freqs = np.array(freqs)
@@ -67,11 +68,11 @@ def all_feat(filename):
         y =y.numpy()
     # y =y.numpy()
     # print(y.shape,filename)
-    new_y = mylpc(y)
+    # new_y = mylpc(y)
     #noise = y - new_y
     stfts = librosa.stft(y,window=signal.get_window('blackman',2048))
     stfts = np.transpose(stfts)
-    print("frames by others are",stfts.shape[0])
+    #print("frames by others are",stfts.shape[0])
     spec_sp , cent= spec_spread(y,sr,stfts)
     roll = spec_roll(y,sr)
     flux = spec_flux(stfts)
